@@ -72,7 +72,7 @@ HI_PATTERNS = [
      r"(?:पीड़िता?|शिकायतकर्ता|आरोपी|साक्षी|गवाह)\s*:?\s*([ऀ-ॿ]+(?:[ \t]+[ऀ-ॿ]+){0,3})",
      0.91),
     ("victim_name",
-     r"(?:पुत्र|पुत्री|पत्नी|पति)\s+(?:श्री|श्रीमती|कु\.?)?\s*([ऀ-ॿ]+(?:[ \t]+[ऀ-ॿ]+){0,2})",
+     r"(?:पुत्री|पुत्र|पिता|पत्नी|पति)\s*:?\s*(?:श्रीमती|श्री|कु\.?)?\s*([ऀ-ॿ]+(?:[ \t]+[ऀ-ॿ]+){0,2})",
      0.89),
     ("address", r"(?:निवास|पता|मकान\s*नं\.?|ग्राम|जिला|थाना)\s*:?\s*([ऀ-ॿ\w\s,\-\.]+?)(?:\n|$)", 0.78),
     ("case_number", r"(?:मु\.?अ\.?सं\.?|प्रकरण\s*क्र\.?|अपराध\s*क्रमांक)\s*:?\s*([\d/\-]+)", 0.97),
@@ -150,18 +150,25 @@ def _span_to_grids(
     grid_size: int,
 ) -> list[tuple[int, int]]:
     results = []
-    seen = set()
+    seen: set[tuple[int, int]] = set()
     offset = 0
     for box in word_boxes:
         word_end = offset + len(box.text)
         if offset < char_end and word_end > char_start:
-            cx = box.left + box.width // 2
-            cy = box.top + box.height // 2
-            col = min(int(cx / max(page_width, 1) * grid_size), grid_size - 1)
-            row = min(int(cy / max(page_height, 1) * grid_size), grid_size - 1)
-            if (row, col) not in seen:
-                seen.add((row, col))
-                results.append((row, col))
+            # Every tile the box overlaps — left edge to right edge, top to bottom
+            col_lo = int(box.left / max(page_width, 1) * grid_size)
+            col_hi = int((box.left + box.width) / max(page_width, 1) * grid_size)
+            row_lo = int(box.top / max(page_height, 1) * grid_size)
+            row_hi = int((box.top + box.height) / max(page_height, 1) * grid_size)
+            col_lo = max(0, min(col_lo, grid_size - 1))
+            col_hi = max(0, min(col_hi, grid_size - 1))
+            row_lo = max(0, min(row_lo, grid_size - 1))
+            row_hi = max(0, min(row_hi, grid_size - 1))
+            for r in range(row_lo, row_hi + 1):
+                for c in range(col_lo, col_hi + 1):
+                    if (r, c) not in seen:
+                        seen.add((r, c))
+                        results.append((r, c))
         offset = word_end + 1
     return results or [_text_to_grid_fallback(char_start, full_text, grid_size)]
 
@@ -211,8 +218,9 @@ _ETYPE_PRIORITY = {
     "aadhaar": 10, "pan": 10, "passport": 10, "case_number": 10,
     "phone": 9, "email": 9, "vehicle_reg": 9,
     "victim_name": 8,
-    "age": 7, "dob": 6,
-    "address": 5,
+    "age": 7,
+    "address": 6,   # PIN code should beat a spaCy DATE guess
+    "dob": 5,
 }
 
 def _deduplicate(detections: list[Detection]) -> list[Detection]:
@@ -237,9 +245,9 @@ def generate_suggestions(document_version_id: str, grid_size: int, pages: list[P
         try:
             png_bytes = base64.b64decode(page.png_base64)
             full_text, word_boxes = _ocr_page(png_bytes)
-            source = "bhashini_ocr" if word_boxes else "text_layer"
+            source = "text_layer"   # tesseract OCR result, reusing allowed schema value
             spacy_hits = _run_spacy(full_text, word_boxes, page.width_px, page.height_px, grid_size, source)
-            regex_hits = _run_regex(full_text, word_boxes, page.width_px, page.height_px, grid_size, "indicner")
+            regex_hits = _run_regex(full_text, word_boxes, page.width_px, page.height_px, grid_size, "text_layer")
             for d in _deduplicate(spacy_hits + regex_hits):
                 all_suggestions.append(Suggestion(page_index=page.page_index, row=d.row, col=d.col, entity_type=d.entity_type, confidence_score=d.confidence, source=d.source))
         except Exception as exc:
