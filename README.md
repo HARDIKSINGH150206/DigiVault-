@@ -1,152 +1,292 @@
-cat > ~/Documents/VScode/Code/digivault/README.md << 'ENDOFFILE'
+<div align="center">
+
+<img src="https://img.shields.io/badge/DigiVault-v1.0-0052CC?style=for-the-badge" alt="DigiVault"/>
+
 # DigiVault
 
-> Secure digital evidence management for NCRB's Women Safety Division — Smart India Hackathon 2026 (Track 2: Web3 and Privacy for Billions)
+### Tamper-Evident Digital Evidence Management for Indian Law Enforcement
 
-Tamper-evident document storage with cryptographic hash chains, AI-assisted redaction, blockchain anchoring on Polygon Amoy, and consent-based sharing for courts and NGOs.
+*Built for NCRB Women Safety Division · Ministry of Home Affairs*
+
+[![Next.js](https://img.shields.io/badge/Next.js-15-black?style=flat-square&logo=nextdotjs)](https://nextjs.org)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.100-009688?style=flat-square&logo=fastapi)](https://fastapi.tiangolo.com)
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-4169E1?style=flat-square&logo=postgresql&logoColor=white)](https://postgresql.org)
+[![Polygon](https://img.shields.io/badge/Polygon-Amoy-8247E5?style=flat-square&logo=polygon)](https://polygon.technology)
+[![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)](LICENSE)
+
+</div>
 
 ---
 
-## Tech Stack
+## The Problem
 
-| Layer | Technology |
+Every FIR, witness statement, and forensic report in India's criminal justice system passes through dozens of hands before a case reaches court. Each handoff is a tampering opportunity — and today there is no cryptographic proof that a document presented in court is identical to the one filed at the police station.
+
+For the NCRB Women Safety Division this matters more than anywhere else. **Section 228A IPC** criminalises the disclosure of a sexual assault victim's identity. Yet the current workflow — paper files, scanned PDFs, WhatsApp attachments — offers no automated redaction, no field-level access control, and no audit trail that could withstand legal scrutiny.
+
+DigiVault was built to fix this.
+
+---
+
+## What DigiVault Does
+
+| Capability | How |
 |---|---|
-| Frontend + Backend | Next.js 15 (App Router, TypeScript) |
-| AI Service | FastAPI (Python 3.14) |
-| Database | PostgreSQL 17 (via Docker) |
-| Object Storage | MinIO (via Docker) |
-| Smart Contracts | Solidity + Hardhat, Polygon Amoy Testnet |
-| ORM | Prisma |
-| Crypto | WebCrypto API, js-sha256, Merkle trees |
+| **Tamper-evident storage** | Every file version is SHA-256 hashed and chained — `hash(N) = sha256(prev_hash ‖ file_hash ‖ version ‖ timestamp)`. Any modification breaks the chain. |
+| **External hash anchoring** | Chain root is periodically anchored to Polygon Amoy testnet — an insider with DB root access cannot silently regenerate a valid chain. |
+| **Auto-redaction** | Bilingual NER engine (spaCy + regex, English + Hindi/Devanagari) flags victim names, Aadhaar numbers, phone numbers, addresses and FIR numbers before any export or share. |
+| **Step-up biometrics** | Face liveness check at login, case-open, document sign and export — not continuous monitoring. Each check is logged in the audit trail. |
+| **Insert-only audit log** | Every view, upload, share and export is appended, never updated or deleted. |
+| **Role-based access** | Five roles — Police Officer, Investigating Officer, Court Official, Forensic Lab, Admin — with field-level visibility controls for victim-identifying data. |
+| **Court-ready export** | One-click signed PDF bundle: documents + chain-of-custody log + hash verification certificate. |
 
 ---
 
-## Prerequisites
+## Architecture
 
-- Node.js 20+
-- pnpm (`npm install -g pnpm`)
-- Docker + Docker Compose
-- Python 3.12+ with `uv` (`pip install uv`)
+```
+┌─────────────────────────────────────────────────────────────┐
+│                        Client Layer                          │
+│          Next.js 15  ·  TypeScript  ·  Tailwind CSS         │
+└───────────────────────────┬─────────────────────────────────┘
+                            │ REST / tRPC
+┌───────────────────────────▼─────────────────────────────────┐
+│                       API Layer (Next.js)                    │
+│   Auth (JWT + RBAC)  ·  Hash Chain  ·  Audit Log  ·  Search │
+│                    PostgreSQL  ·  Prisma ORM                 │
+└────────┬──────────────────┬──────────────────┬──────────────┘
+         │                  │                  │
+┌────────▼───────┐  ┌───────▼──────┐  ┌────────▼──────────────┐
+│  File Storage  │  │  AI Service  │  │  Blockchain Anchor     │
+│  (MinIO / S3)  │  │  FastAPI     │  │  Polygon Amoy (EVM)    │
+│  AES-256 rest  │  │  Python 3.12 │  │  Solidity contract     │
+└────────────────┘  └───────┬──────┘  └────────────────────────┘
+                            │
+                   ┌────────▼──────────────────┐
+                   │  NER Redaction Pipeline    │
+                   │  pytesseract (eng+hin)     │
+                   │  spaCy en_core_web_sm      │
+                   │  24 regex patterns (EN+HI) │
+                   └────────────────────────────┘
+```
+
+The AI service is a **strict read-only consumer** of the document bytes. It decodes the PNG page image, runs OCR and NER, and returns tile coordinates for the frontend to overlay redaction boxes. It never touches the hash chain.
 
 ---
 
-## Running Locally
+## Redaction Engine
 
-### 1 — Environment setup
+The auto-redaction pipeline (`apps/ai-service/app/real_suggestions.py`) runs entirely offline — no external API calls, no third-party data sharing.
 
-\`\`\`bash
-cp .env.example .env
-cp apps/web/.env.example apps/web/.env.local
-cp apps/ai-service/.env.example apps/ai-service/.env
-\`\`\`
+### Detection sources
 
-Fill in the values in \`.env\`. The defaults in \`.env.example\` work for local development as-is.
+| Source | What it catches |
+|---|---|
+| **spaCy `en_core_web_sm`** | PERSON, GPE, LOC, ORG entities in English text |
+| **English regex (15 patterns)** | Indian mobile numbers, Aadhaar, PAN, passport, FIR/case numbers, email, DOB, age, vehicle registration, victim names via S/O · D/O · W/O, complainant keyword pattern |
+| **Hindi/Devanagari regex (9 patterns)** | Phone after मोबाइल/दूरभाष, Aadhaar after आधार संख्या, age (आयु/उम्र), victim/accused names after पीड़िता/आरोपी/साक्षी, father-name via पुत्र/पुत्री/पिता, address after निवास/पता/थाना, FIR number via मु.अ.सं., DOB via जन्म तिथि, Devanagari-digit phones |
 
-### 2 — Install dependencies
+### Pipeline
 
-\`\`\`bash
-pnpm install
-\`\`\`
+```
+PNG page image (base64)
+        │
+        ▼
+pytesseract OCR  ─── eng+hin lang pack, LSTM engine (--oem 3)
+        │              line-aware output (real \n, not space-joined)
+        ▼
+spaCy NER ──────────── English entities
+        +
+Regex NER ──────────── English + Hindi/Devanagari patterns
+        │
+        ▼
+Priority-based dedup ── aadhaar/pan/passport > phone > name > age > address > dob
+        │               full bounding-box tile coverage (not centre-only)
+        ▼
+Suggestion list ──────── [{page, row, col, entity_type, confidence, source}]
+```
 
-### 3 — Start Docker (Postgres + MinIO)
+**Failure contract:** per-page errors are caught and logged. A redaction failure never blocks the upload or hash pipeline.
 
-\`\`\`bash
-docker compose up -d
-\`\`\`
+---
 
-Confirm: \`docker compose ps\` — both \`digivault-postgres\` and \`digivault-minio\` should show \`Up\`.
+## Repo Structure
 
-### 4 — Run database migrations
+```
+digivault/
+├── apps/
+│   ├── web/                    # Next.js 15 frontend + API routes
+│   │   ├── src/app/            # App Router pages
+│   │   ├── src/lib/            # Auth, hash chain, audit log
+│   │   └── prisma/             # Schema + migrations
+│   └── ai-service/             # FastAPI redaction microservice
+│       ├── app/
+│       │   ├── main.py         # /health + /v1/redaction-suggestions
+│       │   ├── real_suggestions.py  # Bilingual NER pipeline
+│       │   └── schemas.py      # Pydantic models
+│       └── requirements.txt
+├── contracts/                  # Solidity hash-anchor contract (Polygon)
+└── scripts/                    # Dev utilities
+```
 
-\`\`\`bash
-npx prisma migrate dev
-\`\`\`
+---
 
-### 5 — Start the AI service
+## Quick Start
 
-Open a new terminal:
-\`\`\`bash
-cd apps/ai-service
-uv run uvicorn app.main:app --port 8001 --reload
-\`\`\`
+### Prerequisites
 
-Confirm: \`curl http://localhost:8001/health\` → \`{"status":"ok"}\`
+| Tool | Version |
+|---|---|
+| Node.js | 18+ |
+| Python | 3.12+ |
+| PostgreSQL | 14+ |
+| tesseract-ocr | 5.x with `eng` + `hin` packs |
 
-### 6 — Start the Next.js backend + frontend
+### 1. Clone and install
 
-Open another terminal:
-\`\`\`bash
+```bash
+git clone https://github.com/HARDIKSINGH150206/digivault.git
+cd digivault
+
+# Frontend
+cd apps/web && npm install
+
+# AI service (uv recommended)
+cd ../ai-service
+uv venv && source .venv/bin/activate
+uv pip install -r requirements.txt
+python -m spacy download en_core_web_sm
+```
+
+### 2. Install Tesseract (Ubuntu/Debian)
+
+```bash
+sudo apt-get install -y tesseract-ocr tesseract-ocr-eng tesseract-ocr-hin
+```
+
+### 3. Environment variables
+
+```bash
+# apps/web/.env.local
+DATABASE_URL="postgresql://user:pass@localhost:5432/digivault"
+JWT_SECRET="your-secret-here"
+NEXT_PUBLIC_AI_SERVICE_URL="http://localhost:8000"
+
+# apps/ai-service/.env
+# (no required vars — model and tesseract are local)
+```
+
+### 4. Database
+
+```bash
 cd apps/web
-pnpm dev
-\`\`\`
+npx prisma migrate dev
+npx prisma db seed          # optional demo data
+```
 
-App is live at **http://localhost:3000**
+### 5. Run
 
----
+```bash
+# Terminal 1 — AI service
+cd apps/ai-service && uvicorn app.main:app --reload --port 8000
 
-## Demo Golden Path
+# Terminal 2 — Web app
+cd apps/web && npm run dev
+```
 
-1. Open \`http://localhost:3000\` → log in
-2. Create a case → upload a PDF (FIR scan)
-3. Wait for AI redaction suggestions (status: READY)
-4. Select suggestions → confirm redactions
-5. Anchor the version to Polygon Amoy blockchain
-6. Generate a share link for a court recipient (no login required for recipient)
-7. Open \`http://localhost:3000/verify\` → load proof bundle → verify tamper-evidence
-
----
-
-## Project Structure
-
-\`\`\`
-docs/                   — architecture, crypto spec, API spec, demo script
-packages/
-  crypto-core/          — shared Merkle tree & WebCrypto logic
-  contracts/            — EvidenceAnchor.sol, Polygon Amoy deployment
-apps/
-  web/                  — Next.js: officer dashboard + Court Verification Portal
-  ai-service/           — FastAPI: AI redaction suggestion engine
-prisma/
-  schema.prisma         — database source of truth
-  migrations/           — applied migrations (do not edit manually)
-docker-compose.yml      — Postgres 17 + MinIO
-CLAUDE.md               — AI coding assistant rules (auto-loaded by Claude Code)
-\`\`\`
+Open [http://localhost:3000](http://localhost:3000).
 
 ---
 
-## Branch Strategy
+## API Reference
 
-| Branch | Purpose |
+### AI Service
+
+| Endpoint | Method | Description |
+|---|---|---|
+| `/health` | GET | Liveness check → `{"status": "ok"}` |
+| `/v1/redaction-suggestions` | POST | Run NER on page images, return tile coordinates |
+
+**POST `/v1/redaction-suggestions`**
+
+```json
+{
+  "document_version_id": "uuid",
+  "grid_size": 20,
+  "pages": [
+    {
+      "page_index": 0,
+      "width_px": 1240,
+      "height_px": 1754,
+      "png_base64": "<base64-encoded PNG>"
+    }
+  ]
+}
+```
+
+Response:
+
+```json
+{
+  "document_version_id": "uuid",
+  "status": "ready",
+  "suggestions": [
+    {
+      "page_index": 0,
+      "row": 3,
+      "col": 4,
+      "entity_type": "victim_name",
+      "confidence_score": 0.91,
+      "source": "text_layer"
+    }
+  ]
+}
+```
+
+Entity types: `victim_name` · `phone` · `aadhaar` · `pan` · `passport` · `email` · `case_number` · `dob` · `age` · `address` · `vehicle_reg`
+
+---
+
+## Compliance & Legal Basis
+
+| Requirement | Implementation |
 |---|---|
-| \`main\` | Stable, demo-ready. Protected — no direct pushes. |
-| \`dev\` | Integration branch. All PRs target here. |
-| \`feat/*\` | Feature branches. Open PRs into \`dev\`. |
-
-\`\`\`bash
-git checkout dev
-git checkout -b feat/your-feature-name
-git push origin feat/your-feature-name
-# Open PR into dev on GitHub
-\`\`\`
+| Section 228A IPC — victim identity | Auto-redaction engine; unredacted original gated behind Case Owner role |
+| DPDP Act 2023 — data minimisation | Field-level RBAC; no continuous biometric collection |
+| Chain of custody | Append-only audit log; SHA-256 hash chain per document version |
+| Court admissibility | Signed PDF export bundle with hash verification certificate |
 
 ---
 
-## Key Architectural Rules
+## Roadmap
 
-- **PNG only** — never JPEG for tile storage. Lossy compression breaks Merkle hashes.
-- **AI is advisory only** — OCR/NER suggests tiles; Merkle root computed from raw pixels only.
-- **Dual anchor** — every version must go to MinIO Object Lock AND Polygon Amoy.
-- **Client-side hashing first** — SHA-256 in-browser before upload; server re-verifies.
-- **Court Verifier is stateless** — no auth, no DB calls, reads contract address from proof file.
-
-See \`CLAUDE.md\` for the full rules before writing any code.
+- [ ] Devanagari-native OCR via Bhashini API (CDAC/MeitY) for improved accuracy on handwritten Hindi FIRs
+- [ ] QR-linked physical evidence chain-of-custody (scan at each seizure → lab → court handoff)
+- [ ] Anomaly detection on the audit log (unusual access volume, off-hours downloads, out-of-team access)
+- [ ] ICJS-compatible metadata schema for interoperability with the national Criminal Justice System
+- [ ] Offline-first mobile upload for field officers with poor connectivity
+- [ ] Multi-level approval workflow (IO → SP → Legal Officer sign-off)
 
 ---
 
-## Smart Contract
+## Built With
 
-Deployed on Polygon Amoy Testnet:
-- Address: \`0x6B8c4e1Dce347b9fa40381818217C6262EB56Ba4\`
-- Explorer: [amoy.polygonscan.com](https://amoy.polygonscan.com/address/0x6B8c4e1Dce347b9fa40381818217C6262EB56Ba4)
-ENDOFFILE
+- [Next.js 15](https://nextjs.org) — React framework with App Router
+- [FastAPI](https://fastapi.tiangolo.com) — Python API for the NER microservice
+- [PostgreSQL](https://postgresql.org) + [Prisma](https://prisma.io) — Relational database and ORM
+- [spaCy](https://spacy.io) `en_core_web_sm` — English NER model
+- [pytesseract](https://github.com/madmaze/pytesseract) — Python wrapper for Tesseract OCR
+- [Polygon Amoy](https://polygon.technology) — EVM testnet for hash anchoring
+- [Tailwind CSS](https://tailwindcss.com) — Utility-first styling
+
+---
+
+## License
+
+MIT © 2026 Hardik Singh
+
+---
+
+<div align="center">
+<sub>Built for Build for Billions 2026 · NCRB Women Safety Division · Ministry of Home Affairs</sub>
+</div>
