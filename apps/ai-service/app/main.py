@@ -3,7 +3,7 @@ import binascii
 
 from fastapi import FastAPI, HTTPException
 
-from .fake_suggestions import generate_suggestions
+from .real_suggestions import generate_suggestions
 from .schemas import SuggestionRequest, SuggestionResponse
 
 app = FastAPI(title="DigiVault AI Service", description="STUB — fake suggestions, real interface contract.")
