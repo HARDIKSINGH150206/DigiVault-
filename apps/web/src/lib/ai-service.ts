@@ -21,7 +21,8 @@ export async function requestRedactionSuggestions(
   gridSize: number,
   pages: { pageIndex: number; widthPx: number; heightPx: number; pngBytes: Buffer }[]
 ): Promise<AiSuggestion[]> {
-  const baseUrl = process.env.AI_SERVICE_URL ?? "http://localhost:8001";
+  const baseUrl = process.env.AI_SERVICE_URL;
+  if (!baseUrl) throw new Error("AI_SERVICE_URL is not set");
 
   const res = await fetch(`${baseUrl}/v1/redaction-suggestions`, {
     method: "POST",
